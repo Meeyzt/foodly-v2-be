@@ -5,12 +5,24 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../../database/prisma.service';
-import { BRANCH_ROLES, STAFF_PERMISSIONS } from '../../common/authz/rbac.constants';
+import {
+  BRANCH_ROLES,
+  STAFF_PERMISSIONS,
+  StaffPermission,
+} from '../../common/authz/rbac.constants';
 import { AuthzRequestUser } from '../../common/authz/authz.types';
 import { CartPreviewDto } from './dto/cart-preview.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { ORDER_STATUS, QR_STATUS } from './domain/order.constants';
+import { OrderStatus, ORDER_STATUS, QR_STATUS } from './domain/order.constants';
 import { OrderStateMachine } from './domain/order-state.machine';
+
+const ORDER_STATUS_PERMISSION_MAP: Partial<Record<OrderStatus, StaffPermission>> = {
+  [ORDER_STATUS.PREPARING]: STAFF_PERMISSIONS.ORDER_STATUS_PREPARING,
+  [ORDER_STATUS.READY_FOR_SERVICE]: STAFF_PERMISSIONS.ORDER_STATUS_READY_FOR_SERVICE,
+  [ORDER_STATUS.DELIVERED]: STAFF_PERMISSIONS.ORDER_STATUS_DELIVERED,
+  [ORDER_STATUS.COMPLETED]: STAFF_PERMISSIONS.ORDER_STATUS_COMPLETED,
+  [ORDER_STATUS.CANCELLED]: STAFF_PERMISSIONS.ORDER_STATUS_CANCELLED,
+};
 
 @Injectable()
 export class OrdersService {
@@ -180,6 +192,54 @@ export class OrdersService {
         completedAt: true,
       },
       orderBy: { placedAt: 'desc' },
+    });
+  }
+
+  async updateOrderStatus(
+    branchId: string,
+    orderId: string,
+    toStatus: OrderStatus,
+    user: AuthzRequestUser,
+  ) {
+    const membership = user.memberships.find((m) => m.branchId === branchId);
+
+    if (!membership) {
+      throw new BadRequestException('No branch access');
+    }
+
+    const isPrivileged =
+      membership.role === BRANCH_ROLES.BUSINESS_ADMIN ||
+      membership.role === BRANCH_ROLES.BRANCH_MANAGER;
+
+    const requiredPermission = ORDER_STATUS_PERMISSION_MAP[toStatus];
+
+    const hasPermission =
+      membership.permissions.includes(STAFF_PERMISSIONS.ORDER_STATUS_UPDATE_ANY) ||
+      (requiredPermission ? membership.permissions.includes(requiredPermission) : false);
+
+    if (!isPrivileged && !hasPermission) {
+      throw new BadRequestException('No order status update permission');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findFirst({
+        where: { id: orderId, branchId },
+      });
+
+      if (!order) {
+        throw new NotFoundException('Order not found');
+      }
+
+      this.orderStateMachine.transition(order.status as OrderStatus, toStatus);
+
+      return tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: toStatus,
+          ...(toStatus === ORDER_STATUS.COMPLETED ? { completedAt: new Date() } : {}),
+        },
+        include: { items: true, qr: true },
+      });
     });
   }
 

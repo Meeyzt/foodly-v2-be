@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -18,6 +19,7 @@ import { CartPreviewDto } from './dto/cart-preview.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderHistoryDto } from './dto/order-history.dto';
 import { ReviewEligibleDto } from './dto/review-eligible.dto';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
 
 @Controller()
@@ -70,5 +72,24 @@ export class OrdersController {
     @Req() req: { user: AuthzRequestUser },
   ) {
     return this.ordersService.staffConfirmQr(branchId, orderId, req.user);
+  }
+
+  @UseGuards(JwtAuthGuard, AuthzGuard)
+  @Authz({
+    branchParam: 'branchId',
+    roles: [
+      BRANCH_ROLES.BUSINESS_ADMIN,
+      BRANCH_ROLES.BRANCH_MANAGER,
+      BRANCH_ROLES.STAFF,
+    ],
+  })
+  @Patch('staff/branches/:branchId/orders/:orderId/status')
+  updateOrderStatus(
+    @Param('branchId') branchId: string,
+    @Param('orderId') orderId: string,
+    @Body() dto: UpdateOrderStatusDto,
+    @Req() req: { user: AuthzRequestUser },
+  ) {
+    return this.ordersService.updateOrderStatus(branchId, orderId, dto.status, req.user);
   }
 }
