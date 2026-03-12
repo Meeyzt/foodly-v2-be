@@ -8,10 +8,222 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id               String             @id @default(cuid())
+  email            String             @unique
+  name             String
+  passwordHash     String
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  memberships      BranchMembership[]
+  shifts           Shift[]
+  reviews          Review[]
+  inventoryUpdates InventoryItem[]    @relation("InventoryUpdatedBy")
+}
+
+model Restaurant {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  branches    Branch[]
+  menus       Menu[]
+}
+
+model Branch {
+  id              String             @id @default(cuid())
+  restaurantId    String
+  name            String
+  code            String             @unique
+  address         String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  restaurant      Restaurant         @relation(fields: [restaurantId], references: [id])
+  tables          Table[]
+  categories      Category[]
+  products        Product[]
+  orders          Order[]
+  orderQrs        OrderQR[]
+  shifts          Shift[]
+  inventoryItems  InventoryItem[]
+  analyticsEvents AnalyticsEvent[]
+  memberships     BranchMembership[]
+}
+
+model BranchMembership {
+  id          String                       @id @default(cuid())
+  userId      String
+  branchId    String
+  role        String
+  createdAt   DateTime                     @default(now())
+  updatedAt   DateTime                     @updatedAt
+  user        User                         @relation(fields: [userId], references: [id])
+  branch      Branch                       @relation(fields: [branchId], references: [id])
+  permissions BranchMembershipPermission[]
+
+  @@unique([userId, branchId])
+}
+
+model BranchMembershipPermission {
+  id           String           @id @default(cuid())
+  membershipId String
+  permission   String
+  membership   BranchMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, permission])
+}
+
+model Table {
+  id        String   @id @default(cuid())
+  branchId  String
+  code      String
+  capacity  Int      @default(2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  orders    Order[]
+  orderQrs  OrderQR[]
+
+  @@unique([branchId, code])
+}
+
+model Menu {
+  id           String    @id @default(cuid())
+  restaurantId String
   name         String
-  passwordHash String
-  createdAt    DateTime @default(now())
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  categories   Category[]
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  branchId  String
+  menuId    String
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  menu      Menu     @relation(fields: [menuId], references: [id])
+  products  Product[]
+}
+
+model Product {
+  id          String    @id @default(cuid())
+  branchId    String
+  categoryId  String
+  name        String
+  description String?
+  price       Float
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  branch      Branch    @relation(fields: [branchId], references: [id])
+  category    Category  @relation(fields: [categoryId], references: [id])
+  orderItems  OrderItem[]
+
+  @@index([branchId, isActive])
+}
+
+model Order {
+  id             String      @id @default(cuid())
+  branchId       String
+  tableId        String
+  customerRef    String
+  status         String
+  subtotalAmount Float
+  totalAmount    Float
+  notes          String?
+  placedAt       DateTime    @default(now())
+  completedAt    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  branch         Branch      @relation(fields: [branchId], references: [id])
+  table          Table       @relation(fields: [tableId], references: [id])
+  items          OrderItem[]
+  qr             OrderQR?
+  review         Review?
+
+  @@index([branchId, tableId])
+  @@index([customerRef, placedAt])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Int
+  unitPrice Float
+  lineTotal Float
+  note      String?
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model OrderQR {
+  id            String   @id @default(cuid())
+  branchId      String
+  tableId       String
+  orderId       String   @unique
+  qrCode        String
+  status        String
+  generatedAt   DateTime?
+  confirmedAt   DateTime?
+  confirmedById String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  branch        Branch   @relation(fields: [branchId], references: [id])
+  table         Table    @relation(fields: [tableId], references: [id])
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([branchId, tableId, status])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  orderId   String   @unique
+  userId    String?
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id])
+}
+
+model Shift {
+  id        String   @id @default(cuid())
+  branchId  String
+  userId    String
+  startsAt  DateTime
+  endsAt    DateTime?
+  createdAt DateTime @default(now())
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model InventoryItem {
+  id           String   @id @default(cuid())
+  branchId     String
+  name         String
+  unit         String
+  stockLevel   Float
+  reorderLevel Float?
+  updatedById  String?
   updatedAt    DateTime @updatedAt
+  branch       Branch   @relation(fields: [branchId], references: [id])
+  updatedBy    User?    @relation("InventoryUpdatedBy", fields: [updatedById], references: [id])
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  branchId  String
+  eventName String
+  payload   String?
+  createdAt DateTime @default(now())
+  branch    Branch   @relation(fields: [branchId], references: [id])
+
+  @@index([branchId, eventName, createdAt])
 }
