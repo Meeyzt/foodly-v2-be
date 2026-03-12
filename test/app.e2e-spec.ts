@@ -12,6 +12,8 @@ describe('Sprint-1 hardening (e2e)', () => {
 
   let branchId: string;
   let tableId: string;
+  let menuId: string;
+  let categoryId: string;
   let productId: string;
 
   let managerUserId: string;
@@ -159,6 +161,129 @@ describe('Sprint-1 hardening (e2e)', () => {
     expect(second.body.tableId).toEqual(tableId);
   });
 
+  it('review create + eligibility: completed order can be reviewed once only', async () => {
+    const managerToken = await loginAndGetToken(managerEmail, password);
+    const customerRef = 'review-customer-1';
+    const orderId = await createCustomerOrder(customerRef);
+
+    await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/orders/${orderId}/scan-qr/confirm`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(201);
+
+    for (const status of ['PREPARING', 'READY_FOR_SERVICE', 'DELIVERED', 'COMPLETED']) {
+      await request(app.getHttpServer())
+        .patch(`/api/staff/branches/${branchId}/orders/${orderId}/status`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ status })
+        .expect(200);
+    }
+
+    const eligibleBefore = await request(app.getHttpServer())
+      .get('/api/customer/orders/review-eligible')
+      .query({ customerRef })
+      .expect(200);
+    expect(eligibleBefore.body.some((item: { id: string }) => item.id === orderId)).toBe(true);
+
+    await request(app.getHttpServer())
+      .post(`/api/customer/orders/${orderId}/reviews`)
+      .send({ customerRef, rating: 5, comment: 'Great!' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/customer/orders/${orderId}/reviews`)
+      .send({ customerRef, rating: 4 })
+      .expect(400);
+
+    const eligibleAfter = await request(app.getHttpServer())
+      .get('/api/customer/orders/review-eligible')
+      .query({ customerRef })
+      .expect(200);
+    expect(eligibleAfter.body.some((item: { id: string }) => item.id === orderId)).toBe(false);
+  });
+
+  it('order status idempotency: same target status update is safe', async () => {
+    const managerToken = await loginAndGetToken(managerEmail, password);
+    const orderId = await createCustomerOrder('idempotency-customer');
+
+    await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/orders/${orderId}/scan-qr/confirm`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/staff/branches/${branchId}/orders/${orderId}/status`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ status: 'PREPARING' })
+      .expect(200);
+
+    const second = await request(app.getHttpServer())
+      .patch(`/api/staff/branches/${branchId}/orders/${orderId}/status`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ status: 'PREPARING' })
+      .expect(200);
+
+    expect(second.body.status).toBe('PREPARING');
+  });
+
+  it('manager/business menu-category-product CRUD works with branch-scoped authz', async () => {
+    const managerToken = await loginAndGetToken(managerEmail, password);
+    const staffToken = await loginAndGetToken(staffEmail, password);
+
+    await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/menus`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ name: 'Forbidden Menu' })
+      .expect(403);
+
+    const createdMenu = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/menus`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ name: 'Manager Menu', isActive: true })
+      .expect(201);
+
+    const createdCategory = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/categories`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ menuId: createdMenu.body.id, name: 'Soups', sortOrder: 2 })
+      .expect(201);
+
+    const createdProduct = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/products`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        categoryId: createdCategory.body.id,
+        name: 'Ezogelin',
+        description: 'Hot',
+        price: 120,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/staff/branches/${branchId}/products/${createdProduct.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ price: 130, isActive: false })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/api/staff/branches/${branchId}/products/${createdProduct.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/api/staff/branches/${branchId}/categories/${createdCategory.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/api/staff/branches/${branchId}/menus/${createdMenu.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    expect(menuId).toBeTruthy();
+    expect(categoryId).toBeTruthy();
+  });
+
   async function resetDb() {
     await prisma.orderItem.deleteMany();
     await prisma.orderQR.deleteMany();
@@ -207,6 +332,7 @@ describe('Sprint-1 hardening (e2e)', () => {
         name: 'Main Menu',
       },
     });
+    menuId = menu.id;
 
     const category = await prisma.category.create({
       data: {
@@ -216,6 +342,7 @@ describe('Sprint-1 hardening (e2e)', () => {
         sortOrder: 1,
       },
     });
+    categoryId = category.id;
 
     const product = await prisma.product.create({
       data: {

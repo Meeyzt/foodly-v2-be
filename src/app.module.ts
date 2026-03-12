@@ -9,6 +9,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { BranchMembershipsModule } from './modules/branch-memberships/branch-memberships.module';
+import { MenuManagementModule } from './modules/menu-management/menu-management.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { BranchMembershipsModule } from './modules/branch-memberships/branch-mem
     AuthModule,
     OrdersModule,
     BranchMembershipsModule,
+    MenuManagementModule,
   ],
 })
 export class AppModule {}

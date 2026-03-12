@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CartPreviewDto } from './dto/cart-preview.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderHistoryDto } from './dto/order-history.dto';
+import { CreateReviewDto } from './dto/create-review.dto';
 import { ReviewEligibleDto } from './dto/review-eligible.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
@@ -54,6 +55,11 @@ export class OrdersController {
   @Get('customer/orders/review-eligible')
   reviewEligible(@Query() query: ReviewEligibleDto) {
     return this.ordersService.reviewEligible(query.customerRef);
+  }
+
+  @Post('customer/orders/:orderId/reviews')
+  createReview(@Param('orderId') orderId: string, @Body() dto: CreateReviewDto) {
+    return this.ordersService.createReview(orderId, dto.customerRef, dto.rating, dto.comment);
   }
 
   @UseGuards(JwtAuthGuard, AuthzGuard)

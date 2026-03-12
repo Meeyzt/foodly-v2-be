@@ -1,8 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+
+import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../database/prisma.service';
 import {
@@ -195,6 +198,43 @@ export class OrdersService {
     });
   }
 
+  async createReview(orderId: string, customerRef: string, rating: number, comment?: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { review: true },
+    });
+
+    if (!order || order.customerRef !== customerRef) {
+      throw new NotFoundException('Order not found for customer');
+    }
+
+    if (order.status !== ORDER_STATUS.COMPLETED) {
+      throw new BadRequestException('Only completed orders can be reviewed');
+    }
+
+    if (order.review) {
+      throw new BadRequestException('Order already reviewed');
+    }
+
+    try {
+      return await this.prisma.review.create({
+        data: {
+          orderId,
+          rating,
+          comment,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new BadRequestException('Order already reviewed');
+      }
+      throw error;
+    }
+  }
+
   async updateOrderStatus(
     branchId: string,
     orderId: string,
@@ -230,14 +270,40 @@ export class OrdersService {
         throw new NotFoundException('Order not found');
       }
 
+      if (order.status === toStatus) {
+        return tx.order.findUniqueOrThrow({
+          where: { id: orderId },
+          include: { items: true, qr: true },
+        });
+      }
+
       this.orderStateMachine.transition(order.status as OrderStatus, toStatus);
 
-      return tx.order.update({
-        where: { id: orderId },
+      const updateResult = await tx.order.updateMany({
+        where: {
+          id: orderId,
+          branchId,
+          status: order.status,
+        },
         data: {
           status: toStatus,
           ...(toStatus === ORDER_STATUS.COMPLETED ? { completedAt: new Date() } : {}),
         },
+      });
+
+      if (updateResult.count === 0) {
+        const latestOrder = await tx.order.findFirst({ where: { id: orderId, branchId } });
+        if (latestOrder?.status === toStatus) {
+          return tx.order.findUniqueOrThrow({
+            where: { id: orderId },
+            include: { items: true, qr: true },
+          });
+        }
+        throw new ConflictException('Order status changed concurrently; retry with latest state');
+      }
+
+      return tx.order.findUniqueOrThrow({
+        where: { id: orderId },
         include: { items: true, qr: true },
       });
     });
