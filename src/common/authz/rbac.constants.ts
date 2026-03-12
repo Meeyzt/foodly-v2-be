@@ -1,0 +1,16 @@
+export const BRANCH_ROLES = {
+  BUSINESS_ADMIN: 'BUSINESS_ADMIN',
+  BRANCH_MANAGER: 'BRANCH_MANAGER',
+  STAFF: 'STAFF',
+} as const;
+
+export const STAFF_PERMISSIONS = {
+  QR_CONFIRM: 'QR_CONFIRM',
+  ORDER_STATUS_UPDATE: 'ORDER_STATUS_UPDATE',
+  INVENTORY_WRITE: 'INVENTORY_WRITE',
+  SHIFT_MANAGE: 'SHIFT_MANAGE',
+} as const;
+
+export type BranchRole = (typeof BRANCH_ROLES)[keyof typeof BRANCH_ROLES];
+export type StaffPermission =
+  (typeof STAFF_PERMISSIONS)[keyof typeof STAFF_PERMISSIONS];
