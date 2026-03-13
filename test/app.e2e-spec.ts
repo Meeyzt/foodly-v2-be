@@ -284,6 +284,69 @@ describe('Sprint-1 hardening (e2e)', () => {
     expect(categoryId).toBeTruthy();
   });
 
+  it('menu active/passive validation: last active menu cannot be deactivated and inactive menu products are hidden for customers', async () => {
+    const managerToken = await loginAndGetToken(managerEmail, password);
+
+    await request(app.getHttpServer())
+      .patch(`/api/staff/branches/${branchId}/menus/${menuId}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ isActive: false })
+      .expect(400);
+
+    const dinnerMenu = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/menus`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ name: 'Dinner', isActive: true })
+      .expect(201);
+
+    const hiddenCategory = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/categories`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ menuId: dinnerMenu.body.id, name: 'Hidden Items', sortOrder: 99 })
+      .expect(201);
+
+    const hiddenProduct = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/products`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        categoryId: hiddenCategory.body.id,
+        name: 'Secret Soup',
+        price: 199,
+        isActive: true,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/staff/branches/${branchId}/menus/${dinnerMenu.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ isActive: false })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get(`/api/customer/branches/${branchId}/products/${hiddenProduct.body.id}`)
+      .expect(404);
+
+    await request(app.getHttpServer())
+      .post(`/api/customer/branches/${branchId}/cart-preview`)
+      .send({ items: [{ productId: hiddenProduct.body.id, quantity: 1 }] })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .delete(`/api/staff/branches/${branchId}/products/${hiddenProduct.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/api/staff/branches/${branchId}/categories/${hiddenCategory.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/api/staff/branches/${branchId}/menus/${dinnerMenu.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+  });
+
   async function resetDb() {
     await prisma.orderItem.deleteMany();
     await prisma.orderQR.deleteMany();

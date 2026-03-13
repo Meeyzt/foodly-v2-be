@@ -36,7 +36,11 @@ export class OrdersService {
 
   async listProducts(branchId: string) {
     return this.prisma.product.findMany({
-      where: { branchId, isActive: true },
+      where: {
+        branchId,
+        isActive: true,
+        category: { menu: { isActive: true } },
+      },
       select: {
         id: true,
         name: true,
@@ -50,7 +54,12 @@ export class OrdersService {
 
   async productDetail(branchId: string, productId: string) {
     const product = await this.prisma.product.findFirst({
-      where: { id: productId, branchId, isActive: true },
+      where: {
+        id: productId,
+        branchId,
+        isActive: true,
+        category: { menu: { isActive: true } },
+      },
       select: {
         id: true,
         name: true,
@@ -73,6 +82,7 @@ export class OrdersService {
         branchId,
         isActive: true,
         id: { in: dto.items.map((item) => item.productId) },
+        category: { menu: { isActive: true } },
       },
       select: { id: true, name: true, price: true },
     });

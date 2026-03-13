@@ -41,11 +41,15 @@ export class MenuManagementService {
   async updateMenu(branchId: string, menuId: string, dto: UpdateMenuDto) {
     const menu = await this.prisma.menu.findFirst({
       where: { id: menuId, restaurant: { branches: { some: { id: branchId } } } },
-      select: { id: true },
+      select: { id: true, isActive: true, restaurantId: true },
     });
 
     if (!menu) {
       throw new NotFoundException('Menu not found for branch');
+    }
+
+    if (dto.isActive === false && menu.isActive) {
+      await this.ensureRestaurantHasAnotherActiveMenu(menu.restaurantId, menu.id);
     }
 
     return this.prisma.menu.update({ where: { id: menuId }, data: dto });
@@ -54,14 +58,22 @@ export class MenuManagementService {
   async deleteMenu(branchId: string, menuId: string) {
     const menu = await this.prisma.menu.findFirst({
       where: { id: menuId, restaurant: { branches: { some: { id: branchId } } } },
-      select: { id: true },
+      select: { id: true, isActive: true, restaurantId: true },
     });
 
     if (!menu) {
       throw new NotFoundException('Menu not found for branch');
     }
 
-    return this.prisma.menu.delete({ where: { id: menuId } });
+    if (menu.isActive) {
+      await this.ensureRestaurantHasAnotherActiveMenu(menu.restaurantId, menu.id);
+    }
+
+    try {
+      return await this.prisma.menu.delete({ where: { id: menuId } });
+    } catch {
+      throw new BadRequestException('Menu cannot be deleted while it has categories');
+    }
   }
 
   listCategories(branchId: string) {
@@ -180,5 +192,19 @@ export class MenuManagementService {
     }
 
     return this.prisma.product.delete({ where: { id: productId } });
+  }
+
+  private async ensureRestaurantHasAnotherActiveMenu(restaurantId: string, currentMenuId: string) {
+    const activeMenuCount = await this.prisma.menu.count({
+      where: {
+        restaurantId,
+        isActive: true,
+        NOT: { id: currentMenuId },
+      },
+    });
+
+    if (activeMenuCount === 0) {
+      throw new BadRequestException('At least one active menu must remain');
+    }
   }
 }
