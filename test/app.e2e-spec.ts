@@ -226,6 +226,66 @@ describe('Sprint-1 hardening (e2e)', () => {
     expect(second.body.status).toBe('PREPARING');
   });
 
+  it('manager/business campaign CRUD + segment preview works with branch-scoped authz', async () => {
+    const managerToken = await loginAndGetToken(managerEmail, password);
+    const staffToken = await loginAndGetToken(staffEmail, password);
+
+    await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/campaigns`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({
+        name: 'Forbidden Campaign',
+        segmentType: 'ALL_CUSTOMERS',
+        startsAt: '2026-03-01T00:00:00.000Z',
+        endsAt: '2026-03-30T00:00:00.000Z',
+      })
+      .expect(403);
+
+    const campaign = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/campaigns`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        name: 'VIP Campaign',
+        description: 'High spender discount',
+        segmentType: 'HIGH_SPENDERS',
+        segmentMinTotalSpent: 200,
+        discountRate: 20,
+        startsAt: '2026-03-01T00:00:00.000Z',
+        endsAt: '2026-04-01T00:00:00.000Z',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/api/staff/branches/${branchId}/campaigns`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    const preview = await request(app.getHttpServer())
+      .get(`/api/staff/branches/${branchId}/campaigns/${campaign.body.id}/segment-preview`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    expect(preview.body.segmentType).toBe('HIGH_SPENDERS');
+    expect(preview.body.totalCustomers).toBeGreaterThanOrEqual(0);
+
+    await request(app.getHttpServer())
+      .patch(`/api/staff/branches/${branchId}/campaigns/${campaign.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        name: 'Dormant Back Campaign',
+        segmentType: 'DORMANT_CUSTOMERS',
+        segmentDormantDays: 7,
+        startsAt: '2026-03-05T00:00:00.000Z',
+        endsAt: '2026-04-05T00:00:00.000Z',
+      })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/api/staff/branches/${branchId}/campaigns/${campaign.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+  });
+
   it('manager/business menu-category-product CRUD works with branch-scoped authz', async () => {
     const managerToken = await loginAndGetToken(managerEmail, password);
     const staffToken = await loginAndGetToken(staffEmail, password);
@@ -452,6 +512,7 @@ describe('Sprint-1 hardening (e2e)', () => {
     await prisma.shift.deleteMany();
     await prisma.inventoryItem.deleteMany();
     await prisma.analyticsEvent.deleteMany();
+    await prisma.campaign.deleteMany();
     await prisma.product.deleteMany();
     await prisma.category.deleteMany();
     await prisma.table.deleteMany();

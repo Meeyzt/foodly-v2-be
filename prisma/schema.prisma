@@ -48,6 +48,7 @@ model Branch {
   inventoryItems  InventoryItem[]
   analyticsEvents AnalyticsEvent[]
   memberships     BranchMembership[]
+  campaigns       Campaign[]
 }
 
 model BranchMembership {
@@ -227,4 +228,25 @@ model AnalyticsEvent {
   branch    Branch   @relation(fields: [branchId], references: [id])
 
   @@index([branchId, eventName, createdAt])
+}
+
+model Campaign {
+  id                   String   @id @default(cuid())
+  branchId             String
+  name                 String
+  description          String?
+  segmentType          String
+  segmentMinOrderCount Int?
+  segmentMinTotalSpent Float?
+  segmentDormantDays   Int?
+  discountRate         Float?
+  startsAt             DateTime
+  endsAt               DateTime
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  branch               Branch   @relation(fields: [branchId], references: [id])
+
+  @@index([branchId, isActive])
+  @@index([branchId, startsAt, endsAt])
 }

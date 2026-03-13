@@ -10,6 +10,7 @@ import { HealthModule } from './modules/health/health.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { BranchMembershipsModule } from './modules/branch-memberships/branch-memberships.module';
 import { MenuManagementModule } from './modules/menu-management/menu-management.module';
+import { CampaignsModule } from './modules/campaigns/campaigns.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { MenuManagementModule } from './modules/menu-management/menu-management.
     OrdersModule,
     BranchMembershipsModule,
     MenuManagementModule,
+    CampaignsModule,
   ],
 })
 export class AppModule {}
