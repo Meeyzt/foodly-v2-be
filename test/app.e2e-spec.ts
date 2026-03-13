@@ -226,6 +226,72 @@ describe('Sprint-1 hardening (e2e)', () => {
     expect(second.body.status).toBe('PREPARING');
   });
 
+  it('customer order edit flow supports update, alternatives on stock conflict, and cancellation', async () => {
+    const managerToken = await loginAndGetToken(managerEmail, password);
+
+    const altCandidate = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/products`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        categoryId,
+        name: 'Alt Candidate',
+        price: 180,
+        stock: 5,
+      })
+      .expect(201);
+
+    const lowStock = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/products`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        categoryId,
+        name: 'Low Stock',
+        price: 130,
+        stock: 1,
+      })
+      .expect(201);
+
+    const created = await request(app.getHttpServer())
+      .post('/api/customer/orders')
+      .send({
+        branchId,
+        tableId,
+        customerRef: 'edit-customer',
+        items: [{ productId: lowStock.body.id, quantity: 1 }],
+      })
+      .expect(201);
+
+    const conflict = await request(app.getHttpServer())
+      .patch(`/api/customer/orders/${created.body.id}`)
+      .send({
+        customerRef: 'edit-customer',
+        items: [{ productId: lowStock.body.id, quantity: 2 }],
+      })
+      .expect(409);
+
+    expect(conflict.body.failedProductId).toBe(lowStock.body.id);
+    expect(Array.isArray(conflict.body.alternatives)).toBe(true);
+
+    const updated = await request(app.getHttpServer())
+      .patch(`/api/customer/orders/${created.body.id}`)
+      .send({
+        customerRef: 'edit-customer',
+        items: [{ productId: altCandidate.body.id, quantity: 2 }],
+      })
+      .expect(200);
+
+    expect(updated.body.items).toHaveLength(1);
+    expect(updated.body.items[0].productId).toBe(altCandidate.body.id);
+
+    const cancelled = await request(app.getHttpServer())
+      .post(`/api/customer/orders/${created.body.id}/cancel`)
+      .send({ customerRef: 'edit-customer' })
+      .expect(201);
+
+    expect(cancelled.body.status).toBe('CANCELLED');
+    expect(cancelled.body.qr.status).toBe('CANCELLED');
+  });
+
   it('manager/business campaign CRUD + segment preview works with branch-scoped authz', async () => {
     const managerToken = await loginAndGetToken(managerEmail, password);
     const staffToken = await loginAndGetToken(staffEmail, password);

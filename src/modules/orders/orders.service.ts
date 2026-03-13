@@ -16,6 +16,7 @@ import {
 import { AuthzRequestUser } from '../../common/authz/authz.types';
 import { CartPreviewDto } from './dto/cart-preview.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import { OrderStatus, ORDER_STATUS, QR_STATUS } from './domain/order.constants';
 import { OrderStateMachine } from './domain/order-state.machine';
 
@@ -284,6 +285,199 @@ export class OrdersService {
       }
       throw error;
     }
+  }
+
+  async updateCustomerOrder(orderId: string, dto: UpdateOrderCustomerDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        include: {
+          items: true,
+        },
+      });
+
+      if (!order || order.customerRef !== dto.customerRef) {
+        throw new NotFoundException('Order not found for customer');
+      }
+
+      if (order.status !== ORDER_STATUS.STAFF_CONFIRM_PENDING) {
+        throw new BadRequestException('Only pending-confirmation orders can be updated');
+      }
+
+      const requestedQuantityByProduct = dto.items.reduce<Record<string, number>>((acc, item) => {
+        acc[item.productId] = (acc[item.productId] ?? 0) + item.quantity;
+        return acc;
+      }, {});
+
+      const productIds = Object.keys(requestedQuantityByProduct);
+      const products = await tx.product.findMany({
+        where: {
+          branchId: order.branchId,
+          isActive: true,
+          id: { in: productIds },
+          category: { menu: { isActive: true } },
+        },
+        include: {
+          category: { select: { id: true, name: true } },
+        },
+      });
+
+      if (products.length !== productIds.length) {
+        throw new BadRequestException('Some products are invalid or inactive');
+      }
+
+      const productMap = new Map(products.map((product) => [product.id, product]));
+
+      const currentQuantityByProduct = order.items.reduce<Record<string, number>>((acc, item) => {
+        acc[item.productId] = (acc[item.productId] ?? 0) + item.quantity;
+        return acc;
+      }, {});
+
+      const allProductIds = new Set([
+        ...Object.keys(currentQuantityByProduct),
+        ...Object.keys(requestedQuantityByProduct),
+      ]);
+
+      for (const productId of allProductIds) {
+        const oldQty = currentQuantityByProduct[productId] ?? 0;
+        const newQty = requestedQuantityByProduct[productId] ?? 0;
+        const diff = newQty - oldQty;
+
+        if (diff > 0) {
+          const stockUpdate = await tx.product.updateMany({
+            where: {
+              id: productId,
+              branchId: order.branchId,
+              isActive: true,
+              stock: { gte: diff },
+              category: { menu: { isActive: true } },
+            },
+            data: { stock: { decrement: diff } },
+          });
+
+          if (stockUpdate.count === 0) {
+            const oldItem = order.items.find((item) => item.productId === productId);
+            const sourceCategoryId = oldItem
+              ? (await tx.product.findUnique({
+                  where: { id: oldItem.productId },
+                  select: { categoryId: true },
+                }))?.categoryId
+              : undefined;
+
+            const alternatives = await tx.product.findMany({
+              where: {
+                branchId: order.branchId,
+                isActive: true,
+                stock: { gt: 0 },
+                ...(sourceCategoryId ? { categoryId: sourceCategoryId } : {}),
+                category: { menu: { isActive: true } },
+              },
+              select: { id: true, name: true, price: true, stock: true },
+              orderBy: [{ stock: 'desc' }, { name: 'asc' }],
+              take: 5,
+            });
+
+            throw new ConflictException({
+              message: 'Insufficient stock for one or more products',
+              failedProductId: productId,
+              alternatives,
+            });
+          }
+        }
+      }
+
+      for (const productId of allProductIds) {
+        const oldQty = currentQuantityByProduct[productId] ?? 0;
+        const newQty = requestedQuantityByProduct[productId] ?? 0;
+        const diff = oldQty - newQty;
+
+        if (diff > 0) {
+          await tx.product.update({
+            where: { id: productId },
+            data: { stock: { increment: diff } },
+          });
+        }
+      }
+
+      const mapped = dto.items.map((item) => {
+        const product = productMap.get(item.productId)!;
+        const lineTotal = Number((product.price * item.quantity).toFixed(2));
+
+        return {
+          productId: product.id,
+          quantity: item.quantity,
+          unitPrice: product.price,
+          lineTotal,
+        };
+      });
+
+      const subtotal = Number(mapped.reduce((acc, item) => acc + item.lineTotal, 0).toFixed(2));
+
+      await tx.orderItem.deleteMany({ where: { orderId } });
+
+      await tx.orderItem.createMany({
+        data: mapped.map((item) => ({
+          orderId,
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          lineTotal: item.lineTotal,
+        })),
+      });
+
+      return tx.order.update({
+        where: { id: orderId },
+        data: {
+          subtotalAmount: subtotal,
+          totalAmount: subtotal,
+          notes: dto.notes ?? order.notes,
+        },
+        include: { items: true, qr: true },
+      });
+    });
+  }
+
+  async cancelCustomerOrder(orderId: string, customerRef: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        include: { items: true, qr: true },
+      });
+
+      if (!order || order.customerRef !== customerRef) {
+        throw new NotFoundException('Order not found for customer');
+      }
+
+      if (order.status === ORDER_STATUS.CANCELLED) {
+        return order;
+      }
+
+      if (order.status !== ORDER_STATUS.STAFF_CONFIRM_PENDING) {
+        throw new BadRequestException('Only pending-confirmation orders can be cancelled');
+      }
+
+      this.orderStateMachine.transition(order.status as OrderStatus, ORDER_STATUS.CANCELLED);
+
+      for (const item of order.items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
+        });
+      }
+
+      if (order.qr) {
+        await tx.orderQR.update({
+          where: { orderId },
+          data: { status: QR_STATUS.CANCELLED },
+        });
+      }
+
+      return tx.order.update({
+        where: { id: orderId },
+        data: { status: ORDER_STATUS.CANCELLED },
+        include: { items: true, qr: true },
+      });
+    });
   }
 
   async updateOrderStatus(

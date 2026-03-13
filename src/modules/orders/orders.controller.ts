@@ -21,6 +21,8 @@ import { OrderHistoryDto } from './dto/order-history.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { ReviewEligibleDto } from './dto/review-eligible.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
+import { OrderCustomerRefDto } from './dto/order-customer-ref.dto';
 import { OrdersService } from './orders.service';
 
 @Controller()
@@ -60,6 +62,16 @@ export class OrdersController {
   @Post('customer/orders/:orderId/reviews')
   createReview(@Param('orderId') orderId: string, @Body() dto: CreateReviewDto) {
     return this.ordersService.createReview(orderId, dto.customerRef, dto.rating, dto.comment);
+  }
+
+  @Patch('customer/orders/:orderId')
+  updateCustomerOrder(@Param('orderId') orderId: string, @Body() dto: UpdateOrderCustomerDto) {
+    return this.ordersService.updateCustomerOrder(orderId, dto);
+  }
+
+  @Post('customer/orders/:orderId/cancel')
+  cancelCustomerOrder(@Param('orderId') orderId: string, @Body() dto: OrderCustomerRefDto) {
+    return this.ordersService.cancelCustomerOrder(orderId, dto.customerRef);
   }
 
   @UseGuards(JwtAuthGuard, AuthzGuard)
