@@ -161,6 +161,33 @@ describe('Sprint-1 hardening (e2e)', () => {
     expect(second.body.tableId).toEqual(tableId);
   });
 
+  it('staff table order create: staff can open table order without QR flow', async () => {
+    const staffToken = await loginAndGetToken(staffEmail, password);
+
+    const response = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/tables/${tableId}/orders`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({
+        customerRef: 'walk-in-42',
+        items: [{ productId, quantity: 2 }],
+        notes: 'No onion',
+      })
+      .expect(201);
+
+    expect(response.body.status).toBe('CONFIRMED');
+    expect(response.body.qr).toBeNull();
+    expect(response.body.customerRef).toBe('walk-in-42');
+
+    const overview = await request(app.getHttpServer())
+      .get(`/api/staff/branches/${branchId}/tables/orders`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(200);
+
+    const tableEntry = overview.body.find((entry: { table: { id: string } }) => entry.table.id === tableId);
+    expect(tableEntry).toBeTruthy();
+    expect(tableEntry.orders.some((order: { id: string }) => order.id === response.body.id)).toBe(true);
+  });
+
   it('review create + eligibility: completed order can be reviewed once only', async () => {
     const managerToken = await loginAndGetToken(managerEmail, password);
     const customerRef = 'review-customer-1';

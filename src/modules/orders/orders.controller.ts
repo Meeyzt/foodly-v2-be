@@ -17,6 +17,7 @@ import { AuthzRequestUser } from '../../common/authz/authz.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CartPreviewDto } from './dto/cart-preview.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateStaffTableOrderDto } from './dto/create-staff-table-order.dto';
 import { OrderHistoryDto } from './dto/order-history.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { ReviewEligibleDto } from './dto/review-eligible.dto';
@@ -72,6 +73,25 @@ export class OrdersController {
   @Post('customer/orders/:orderId/cancel')
   cancelCustomerOrder(@Param('orderId') orderId: string, @Body() dto: OrderCustomerRefDto) {
     return this.ordersService.cancelCustomerOrder(orderId, dto.customerRef);
+  }
+
+  @UseGuards(JwtAuthGuard, AuthzGuard)
+  @Authz({
+    branchParam: 'branchId',
+    roles: [
+      BRANCH_ROLES.BUSINESS_ADMIN,
+      BRANCH_ROLES.BRANCH_MANAGER,
+      BRANCH_ROLES.STAFF,
+    ],
+  })
+  @Post('staff/branches/:branchId/tables/:tableId/orders')
+  createStaffTableOrder(
+    @Param('branchId') branchId: string,
+    @Param('tableId') tableId: string,
+    @Body() dto: CreateStaffTableOrderDto,
+    @Req() req: { user: AuthzRequestUser },
+  ) {
+    return this.ordersService.createStaffTableOrder(branchId, tableId, dto, req.user);
   }
 
   @UseGuards(JwtAuthGuard, AuthzGuard)

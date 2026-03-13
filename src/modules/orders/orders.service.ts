@@ -16,6 +16,7 @@ import {
 import { AuthzRequestUser } from '../../common/authz/authz.types';
 import { CartPreviewDto } from './dto/cart-preview.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateStaffTableOrderDto } from './dto/create-staff-table-order.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import { OrderStatus, ORDER_STATUS, QR_STATUS } from './domain/order.constants';
 import { OrderStateMachine } from './domain/order-state.machine';
@@ -153,30 +154,7 @@ export class OrdersService {
     const preview = await this.cartPreview(dto.branchId, { items: dto.items });
 
     return this.prisma.$transaction(async (tx) => {
-      const requestedQuantityByProduct = preview.items.reduce<Record<string, number>>(
-        (acc, item) => {
-          acc[item.productId] = (acc[item.productId] ?? 0) + item.quantity;
-          return acc;
-        },
-        {},
-      );
-
-      for (const [productId, quantity] of Object.entries(requestedQuantityByProduct)) {
-        const stockUpdate = await tx.product.updateMany({
-          where: {
-            id: productId,
-            branchId: dto.branchId,
-            isActive: true,
-            stock: { gte: quantity },
-            category: { menu: { isActive: true } },
-          },
-          data: { stock: { decrement: quantity } },
-        });
-
-        if (stockUpdate.count === 0) {
-          throw new ConflictException('Insufficient stock for one or more products');
-        }
-      }
+      await this.reserveStock(tx, dto.branchId, preview.items);
 
       const order = await tx.order.create({
         data: {
@@ -229,6 +207,77 @@ export class OrdersService {
 
       return updatedOrder;
     });
+  }
+
+  async createStaffTableOrder(
+    branchId: string,
+    tableId: string,
+    dto: CreateStaffTableOrderDto,
+    user: AuthzRequestUser,
+  ) {
+    const table = await this.prisma.table.findFirst({
+      where: { id: tableId, branchId },
+      select: { id: true },
+    });
+
+    if (!table) {
+      throw new BadRequestException('Table does not belong to branch');
+    }
+
+    const preview = await this.cartPreview(branchId, { items: dto.items });
+
+    return this.prisma.$transaction(async (tx) => {
+      await this.reserveStock(tx, branchId, preview.items);
+
+      return tx.order.create({
+        data: {
+          branchId,
+          tableId,
+          customerRef: dto.customerRef?.trim() || `staff-${user.userId}`,
+          status: ORDER_STATUS.CONFIRMED,
+          subtotalAmount: preview.subtotalAmount,
+          totalAmount: preview.totalAmount,
+          notes: dto.notes,
+          items: {
+            create: preview.items.map((item) => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              lineTotal: item.lineTotal,
+            })),
+          },
+        },
+        include: { items: true, qr: true },
+      });
+    });
+  }
+
+  private async reserveStock(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    items: Array<{ productId: string; quantity: number }>,
+  ) {
+    const requestedQuantityByProduct = items.reduce<Record<string, number>>((acc, item) => {
+      acc[item.productId] = (acc[item.productId] ?? 0) + item.quantity;
+      return acc;
+    }, {});
+
+    for (const [productId, quantity] of Object.entries(requestedQuantityByProduct)) {
+      const stockUpdate = await tx.product.updateMany({
+        where: {
+          id: productId,
+          branchId,
+          isActive: true,
+          stock: { gte: quantity },
+          category: { menu: { isActive: true } },
+        },
+        data: { stock: { decrement: quantity } },
+      });
+
+      if (stockUpdate.count === 0) {
+        throw new ConflictException('Insufficient stock for one or more products');
+      }
+    }
   }
 
   async orderHistory(customerRef: string, branchId?: string) {
