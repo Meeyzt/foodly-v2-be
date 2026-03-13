@@ -83,6 +83,34 @@ export class OrdersController {
       BRANCH_ROLES.STAFF,
     ],
   })
+  @Get('staff/branches/:branchId/tables/orders')
+  tableOrderOverview(@Param('branchId') branchId: string) {
+    return this.ordersService.tableOrderOverview(branchId);
+  }
+
+  @UseGuards(JwtAuthGuard, AuthzGuard)
+  @Authz({
+    branchParam: 'branchId',
+    roles: [
+      BRANCH_ROLES.BUSINESS_ADMIN,
+      BRANCH_ROLES.BRANCH_MANAGER,
+      BRANCH_ROLES.STAFF,
+    ],
+  })
+  @Get('staff/branches/:branchId/tables/:tableId/adisyon')
+  tableBill(@Param('branchId') branchId: string, @Param('tableId') tableId: string) {
+    return this.ordersService.tableBill(branchId, tableId);
+  }
+
+  @UseGuards(JwtAuthGuard, AuthzGuard)
+  @Authz({
+    branchParam: 'branchId',
+    roles: [
+      BRANCH_ROLES.BUSINESS_ADMIN,
+      BRANCH_ROLES.BRANCH_MANAGER,
+      BRANCH_ROLES.STAFF,
+    ],
+  })
   @Post('staff/branches/:branchId/orders/:orderId/scan-qr/confirm')
   staffConfirmQr(
     @Param('branchId') branchId: string,

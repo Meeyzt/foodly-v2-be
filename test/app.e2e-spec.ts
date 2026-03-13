@@ -292,6 +292,79 @@ describe('Sprint-1 hardening (e2e)', () => {
     expect(cancelled.body.qr.status).toBe('CANCELLED');
   });
 
+  it('table-based order view and adisyon calculation returns open table totals', async () => {
+    const managerToken = await loginAndGetToken(managerEmail, password);
+
+    const isolatedTable = await prisma.table.create({
+      data: {
+        branchId,
+        code: `TV-${Date.now()}`,
+        capacity: 4,
+      },
+    });
+
+    const firstOrder = await request(app.getHttpServer())
+      .post('/api/customer/orders')
+      .send({
+        branchId,
+        tableId: isolatedTable.id,
+        customerRef: 'table-view-a',
+        items: [{ productId, quantity: 1 }],
+      })
+      .expect(201);
+
+    const secondOrder = await request(app.getHttpServer())
+      .post('/api/customer/orders')
+      .send({
+        branchId,
+        tableId: isolatedTable.id,
+        customerRef: 'table-view-b',
+        items: [
+          { productId, quantity: 2 },
+          { productId, quantity: 1 },
+        ],
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/customer/orders/${secondOrder.body.id}/cancel`)
+      .send({ customerRef: 'table-view-b' })
+      .expect(201);
+
+    const tableOverview = await request(app.getHttpServer())
+      .get(`/api/staff/branches/${branchId}/tables/orders`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    expect(Array.isArray(tableOverview.body)).toBe(true);
+    const targetTable = tableOverview.body.find(
+      (entry: { table: { id: string } }) => entry.table.id === isolatedTable.id,
+    );
+    expect(targetTable).toBeTruthy();
+    expect(targetTable.summary.orderCount).toBeGreaterThanOrEqual(1);
+    expect(targetTable.orders.some((order: { id: string }) => order.id === firstOrder.body.id)).toBe(
+      true,
+    );
+    expect(
+      targetTable.orders.some((order: { id: string }) => order.id === secondOrder.body.id),
+    ).toBe(false);
+
+    const adisyon = await request(app.getHttpServer())
+      .get(`/api/staff/branches/${branchId}/tables/${isolatedTable.id}/adisyon`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    expect(adisyon.body.table.id).toBe(isolatedTable.id);
+    expect(adisyon.body.orders.some((order: { id: string }) => order.id === firstOrder.body.id)).toBe(
+      true,
+    );
+    expect(adisyon.body.orders.some((order: { id: string }) => order.id === secondOrder.body.id)).toBe(
+      false,
+    );
+    expect(adisyon.body.summary.totalAmount).toBe(firstOrder.body.totalAmount);
+    expect(adisyon.body.items[0].quantity).toBe(firstOrder.body.items[0].quantity);
+  });
+
   it('manager/business campaign CRUD + segment preview works with branch-scoped authz', async () => {
     const managerToken = await loginAndGetToken(managerEmail, password);
     const staffToken = await loginAndGetToken(staffEmail, password);

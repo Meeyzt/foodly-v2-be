@@ -28,6 +28,15 @@ const ORDER_STATUS_PERMISSION_MAP: Partial<Record<OrderStatus, StaffPermission>>
   [ORDER_STATUS.CANCELLED]: STAFF_PERMISSIONS.ORDER_STATUS_CANCELLED,
 };
 
+const OPEN_TABLE_ORDER_STATUSES: OrderStatus[] = [
+  ORDER_STATUS.QR_GENERATED,
+  ORDER_STATUS.STAFF_CONFIRM_PENDING,
+  ORDER_STATUS.CONFIRMED,
+  ORDER_STATUS.PREPARING,
+  ORDER_STATUS.READY_FOR_SERVICE,
+  ORDER_STATUS.DELIVERED,
+];
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -478,6 +487,175 @@ export class OrdersService {
         include: { items: true, qr: true },
       });
     });
+  }
+
+  async tableOrderOverview(branchId: string) {
+    const tables = await this.prisma.table.findMany({
+      where: { branchId },
+      select: {
+        id: true,
+        code: true,
+        capacity: true,
+        orders: {
+          where: {
+            branchId,
+            status: { in: OPEN_TABLE_ORDER_STATUSES },
+          },
+          select: {
+            id: true,
+            customerRef: true,
+            status: true,
+            subtotalAmount: true,
+            totalAmount: true,
+            placedAt: true,
+            items: {
+              select: {
+                quantity: true,
+              },
+            },
+          },
+          orderBy: { placedAt: 'asc' },
+        },
+      },
+      orderBy: { code: 'asc' },
+    });
+
+    return tables
+      .filter((table) => table.orders.length > 0)
+      .map((table) => {
+        const orderCount = table.orders.length;
+        const itemCount = table.orders.reduce(
+          (acc, order) => acc + order.items.reduce((s, item) => s + item.quantity, 0),
+          0,
+        );
+        const subtotalAmount = Number(
+          table.orders.reduce((acc, order) => acc + order.subtotalAmount, 0).toFixed(2),
+        );
+        const totalAmount = Number(
+          table.orders.reduce((acc, order) => acc + order.totalAmount, 0).toFixed(2),
+        );
+
+        return {
+          table: {
+            id: table.id,
+            code: table.code,
+            capacity: table.capacity,
+          },
+          summary: {
+            orderCount,
+            itemCount,
+            subtotalAmount,
+            totalAmount,
+          },
+          orders: table.orders.map((order) => ({
+            id: order.id,
+            customerRef: order.customerRef,
+            status: order.status,
+            placedAt: order.placedAt,
+            itemCount: order.items.reduce((acc, item) => acc + item.quantity, 0),
+            subtotalAmount: order.subtotalAmount,
+            totalAmount: order.totalAmount,
+          })),
+        };
+      });
+  }
+
+  async tableBill(branchId: string, tableId: string) {
+    const table = await this.prisma.table.findFirst({
+      where: { id: tableId, branchId },
+      select: {
+        id: true,
+        code: true,
+        capacity: true,
+      },
+    });
+
+    if (!table) {
+      throw new NotFoundException('Table not found');
+    }
+
+    const orders = await this.prisma.order.findMany({
+      where: {
+        branchId,
+        tableId,
+        status: { in: OPEN_TABLE_ORDER_STATUSES },
+      },
+      select: {
+        id: true,
+        customerRef: true,
+        status: true,
+        subtotalAmount: true,
+        totalAmount: true,
+        placedAt: true,
+        items: {
+          select: {
+            productId: true,
+            quantity: true,
+            unitPrice: true,
+            lineTotal: true,
+            product: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { placedAt: 'asc' },
+    });
+
+    const mergedItemMap = new Map<
+      string,
+      {
+        productId: string;
+        name: string;
+        quantity: number;
+        unitPrice: number;
+        lineTotal: number;
+      }
+    >();
+
+    for (const order of orders) {
+      for (const item of order.items) {
+        const existing = mergedItemMap.get(item.productId);
+        if (existing) {
+          existing.quantity += item.quantity;
+          existing.lineTotal = Number((existing.lineTotal + item.lineTotal).toFixed(2));
+        } else {
+          mergedItemMap.set(item.productId, {
+            productId: item.productId,
+            name: item.product.name,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            lineTotal: item.lineTotal,
+          });
+        }
+      }
+    }
+
+    const subtotalAmount = Number(
+      orders.reduce((acc, order) => acc + order.subtotalAmount, 0).toFixed(2),
+    );
+    const totalAmount = Number(orders.reduce((acc, order) => acc + order.totalAmount, 0).toFixed(2));
+
+    return {
+      table,
+      summary: {
+        orderCount: orders.length,
+        itemCount: Array.from(mergedItemMap.values()).reduce((acc, item) => acc + item.quantity, 0),
+        subtotalAmount,
+        totalAmount,
+      },
+      orders: orders.map((order) => ({
+        id: order.id,
+        customerRef: order.customerRef,
+        status: order.status,
+        placedAt: order.placedAt,
+        subtotalAmount: order.subtotalAmount,
+        totalAmount: order.totalAmount,
+      })),
+      items: Array.from(mergedItemMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    };
   }
 
   async updateOrderStatus(
