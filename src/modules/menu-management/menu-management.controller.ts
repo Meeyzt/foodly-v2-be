@@ -13,6 +13,7 @@ import { Authz } from '../../common/authz/authz.decorator';
 import { AuthzGuard } from '../../common/authz/authz.guard';
 import { BRANCH_ROLES } from '../../common/authz/rbac.constants';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AssignProductCategoryDto } from './dto/assign-product-category.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateMenuDto } from './dto/create-menu.dto';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -98,6 +99,15 @@ export class MenuManagementController {
     @Body() dto: UpdateProductDto,
   ) {
     return this.menuManagementService.updateProduct(branchId, productId, dto);
+  }
+
+  @Patch('products/:productId/category')
+  assignProductCategory(
+    @Param('branchId') branchId: string,
+    @Param('productId') productId: string,
+    @Body() dto: AssignProductCategoryDto,
+  ) {
+    return this.menuManagementService.assignProductCategory(branchId, productId, dto.categoryId);
   }
 
   @Delete('products/:productId')

@@ -248,6 +248,12 @@ describe('Sprint-1 hardening (e2e)', () => {
       .send({ menuId: createdMenu.body.id, name: 'Soups', sortOrder: 2 })
       .expect(201);
 
+    const targetCategory = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/categories`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ menuId: createdMenu.body.id, name: 'Main Dishes', sortOrder: 3 })
+      .expect(201);
+
     const createdProduct = await request(app.getHttpServer())
       .post(`/api/staff/branches/${branchId}/products`)
       .set('Authorization', `Bearer ${managerToken}`)
@@ -259,6 +265,13 @@ describe('Sprint-1 hardening (e2e)', () => {
       })
       .expect(201);
 
+    const assignResponse = await request(app.getHttpServer())
+      .patch(`/api/staff/branches/${branchId}/products/${createdProduct.body.id}/category`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ categoryId: targetCategory.body.id })
+      .expect(200);
+    expect(assignResponse.body.categoryId).toBe(targetCategory.body.id);
+
     await request(app.getHttpServer())
       .patch(`/api/staff/branches/${branchId}/products/${createdProduct.body.id}`)
       .set('Authorization', `Bearer ${managerToken}`)
@@ -266,7 +279,17 @@ describe('Sprint-1 hardening (e2e)', () => {
       .expect(200);
 
     await request(app.getHttpServer())
+      .delete(`/api/staff/branches/${branchId}/categories/${targetCategory.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(400);
+
+    await request(app.getHttpServer())
       .delete(`/api/staff/branches/${branchId}/products/${createdProduct.body.id}`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/api/staff/branches/${branchId}/categories/${targetCategory.body.id}`)
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
 

@@ -126,7 +126,11 @@ export class MenuManagementService {
       throw new NotFoundException('Category not found for branch');
     }
 
-    return this.prisma.category.delete({ where: { id: categoryId } });
+    try {
+      return await this.prisma.category.delete({ where: { id: categoryId } });
+    } catch {
+      throw new BadRequestException('Category cannot be deleted while it has products');
+    }
   }
 
   listProducts(branchId: string) {
@@ -179,6 +183,10 @@ export class MenuManagementService {
     }
 
     return this.prisma.product.update({ where: { id: productId }, data: dto });
+  }
+
+  async assignProductCategory(branchId: string, productId: string, categoryId: string) {
+    return this.updateProduct(branchId, productId, { categoryId });
   }
 
   async deleteProduct(branchId: string, productId: string) {
