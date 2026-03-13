@@ -141,6 +141,8 @@ export class MenuManagementService {
   }
 
   async createProduct(branchId: string, dto: CreateProductDto) {
+    this.validateProductFinancialsAndStock(dto.price, dto.stock);
+
     const category = await this.prisma.category.findFirst({
       where: { id: dto.categoryId, branchId },
       select: { id: true },
@@ -157,12 +159,15 @@ export class MenuManagementService {
         name: dto.name,
         description: dto.description,
         price: dto.price,
+        stock: dto.stock,
         isActive: dto.isActive ?? true,
       },
     });
   }
 
   async updateProduct(branchId: string, productId: string, dto: UpdateProductDto) {
+    this.validateProductFinancialsAndStock(dto.price, dto.stock);
+
     const product = await this.prisma.product.findFirst({
       where: { id: productId, branchId },
       select: { id: true },
@@ -200,6 +205,25 @@ export class MenuManagementService {
     }
 
     return this.prisma.product.delete({ where: { id: productId } });
+  }
+
+  private validateProductFinancialsAndStock(price?: number, stock?: number) {
+    if (price !== undefined) {
+      if (!Number.isFinite(price) || price <= 0) {
+        throw new BadRequestException('Price must be greater than 0');
+      }
+
+      const roundedPrice = Number(price.toFixed(2));
+      if (Math.abs(price - roundedPrice) > Number.EPSILON) {
+        throw new BadRequestException('Price must have at most 2 decimal places');
+      }
+    }
+
+    if (stock !== undefined) {
+      if (!Number.isInteger(stock) || stock < 0) {
+        throw new BadRequestException('Stock must be a non-negative integer');
+      }
+    }
   }
 
   private async ensureRestaurantHasAnotherActiveMenu(restaurantId: string, currentMenuId: string) {

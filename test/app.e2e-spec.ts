@@ -262,6 +262,7 @@ describe('Sprint-1 hardening (e2e)', () => {
         name: 'Ezogelin',
         description: 'Hot',
         price: 120,
+        stock: 20,
       })
       .expect(201);
 
@@ -307,6 +308,76 @@ describe('Sprint-1 hardening (e2e)', () => {
     expect(categoryId).toBeTruthy();
   });
 
+  it('product price/stock validation: invalid payload rejected and stock-aware ordering works', async () => {
+    const managerToken = await loginAndGetToken(managerEmail, password);
+
+    await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/products`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        categoryId,
+        name: 'Invalid Price Product',
+        price: 0,
+        stock: 10,
+      })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/products`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        categoryId,
+        name: 'Invalid Stock Product',
+        price: 10,
+        stock: -1,
+      })
+      .expect(400);
+
+    const stockLimitedProduct = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/products`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        categoryId,
+        name: 'Stock Limited Product',
+        price: 100,
+        stock: 2,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/api/customer/orders')
+      .send({
+        branchId,
+        tableId,
+        customerRef: 'stock-customer-1',
+        items: [
+          { productId: stockLimitedProduct.body.id, quantity: 2 },
+          { productId: stockLimitedProduct.body.id, quantity: 1 },
+        ],
+      })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post('/api/customer/orders')
+      .send({
+        branchId,
+        tableId,
+        customerRef: 'stock-customer-2',
+        items: [{ productId: stockLimitedProduct.body.id, quantity: 2 }],
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/api/customer/orders')
+      .send({
+        branchId,
+        tableId,
+        customerRef: 'stock-customer-3',
+        items: [{ productId: stockLimitedProduct.body.id, quantity: 1 }],
+      })
+      .expect(400);
+  });
+
   it('menu active/passive validation: last active menu cannot be deactivated and inactive menu products are hidden for customers', async () => {
     const managerToken = await loginAndGetToken(managerEmail, password);
 
@@ -335,6 +406,7 @@ describe('Sprint-1 hardening (e2e)', () => {
         categoryId: hiddenCategory.body.id,
         name: 'Secret Soup',
         price: 199,
+        stock: 5,
         isActive: true,
       })
       .expect(201);
@@ -436,6 +508,7 @@ describe('Sprint-1 hardening (e2e)', () => {
         categoryId: category.id,
         name: 'Burger',
         price: 210,
+        stock: 100,
         isActive: true,
       },
     });

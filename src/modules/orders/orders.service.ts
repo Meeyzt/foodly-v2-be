@@ -77,22 +77,38 @@ export class OrdersService {
   }
 
   async cartPreview(branchId: string, dto: CartPreviewDto) {
+    const requestedQuantityByProduct = dto.items.reduce<Record<string, number>>((acc, item) => {
+      acc[item.productId] = (acc[item.productId] ?? 0) + item.quantity;
+      return acc;
+    }, {});
+
+    const productIds = Object.keys(requestedQuantityByProduct);
+
     const products = await this.prisma.product.findMany({
       where: {
         branchId,
         isActive: true,
-        id: { in: dto.items.map((item) => item.productId) },
+        id: { in: productIds },
         category: { menu: { isActive: true } },
       },
-      select: { id: true, name: true, price: true },
+      select: { id: true, name: true, price: true, stock: true },
     });
 
-    if (products.length !== dto.items.length) {
+    if (products.length !== productIds.length) {
       throw new BadRequestException('Some products are invalid or inactive');
     }
 
+    const productMap = new Map(products.map((product) => [product.id, product]));
+
+    for (const [productId, requestedQuantity] of Object.entries(requestedQuantityByProduct)) {
+      const product = productMap.get(productId)!;
+      if (product.stock < requestedQuantity) {
+        throw new BadRequestException(`Insufficient stock for product: ${product.name}`);
+      }
+    }
+
     const mapped = dto.items.map((item) => {
-      const product = products.find((p) => p.id === item.productId)!;
+      const product = productMap.get(item.productId)!;
       const lineTotal = Number((product.price * item.quantity).toFixed(2));
       return {
         productId: product.id,
@@ -127,6 +143,31 @@ export class OrdersService {
     const preview = await this.cartPreview(dto.branchId, { items: dto.items });
 
     return this.prisma.$transaction(async (tx) => {
+      const requestedQuantityByProduct = preview.items.reduce<Record<string, number>>(
+        (acc, item) => {
+          acc[item.productId] = (acc[item.productId] ?? 0) + item.quantity;
+          return acc;
+        },
+        {},
+      );
+
+      for (const [productId, quantity] of Object.entries(requestedQuantityByProduct)) {
+        const stockUpdate = await tx.product.updateMany({
+          where: {
+            id: productId,
+            branchId: dto.branchId,
+            isActive: true,
+            stock: { gte: quantity },
+            category: { menu: { isActive: true } },
+          },
+          data: { stock: { decrement: quantity } },
+        });
+
+        if (stockUpdate.count === 0) {
+          throw new ConflictException('Insufficient stock for one or more products');
+        }
+      }
+
       const order = await tx.order.create({
         data: {
           branchId: dto.branchId,
