@@ -707,6 +707,210 @@ export class OrdersService {
     };
   }
 
+  async dailyOrderSummary(branchId: string, date?: string) {
+    const { targetDate, start, end } = this.resolveDayRange(date);
+
+    const orders = await this.prisma.order.findMany({
+      where: {
+        branchId,
+        placedAt: {
+          gte: start,
+          lt: end,
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+        subtotalAmount: true,
+        totalAmount: true,
+        items: {
+          select: {
+            productId: true,
+            quantity: true,
+            lineTotal: true,
+            product: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const byStatus = Object.values(ORDER_STATUS).map((status) => ({
+      status,
+      count: orders.filter((order) => order.status === status).length,
+    }));
+
+    const totalOrderCount = orders.length;
+    const totalItemCount = orders.reduce(
+      (acc, order) => acc + order.items.reduce((sum, item) => sum + item.quantity, 0),
+      0,
+    );
+
+    const grossRevenue = Number(
+      orders.reduce((acc, order) => acc + order.totalAmount, 0).toFixed(2),
+    );
+
+    const completedRevenue = Number(
+      orders
+        .filter((order) => order.status === ORDER_STATUS.COMPLETED)
+        .reduce((acc, order) => acc + order.totalAmount, 0)
+        .toFixed(2),
+    );
+
+    const cancelledOrderCount = orders.filter(
+      (order) => order.status === ORDER_STATUS.CANCELLED,
+    ).length;
+
+    const activeOrderCount = orders.filter((order) =>
+      OPEN_TABLE_ORDER_STATUSES.includes(order.status as OrderStatus),
+    ).length;
+
+    const averageOrderAmount =
+      totalOrderCount === 0 ? 0 : Number((grossRevenue / totalOrderCount).toFixed(2));
+
+    const productAgg = new Map<
+      string,
+      {
+        productId: string;
+        name: string;
+        quantity: number;
+        totalAmount: number;
+      }
+    >();
+
+    for (const order of orders) {
+      for (const item of order.items) {
+        const current = productAgg.get(item.productId);
+        if (current) {
+          current.quantity += item.quantity;
+          current.totalAmount = Number((current.totalAmount + item.lineTotal).toFixed(2));
+        } else {
+          productAgg.set(item.productId, {
+            productId: item.productId,
+            name: item.product.name,
+            quantity: item.quantity,
+            totalAmount: item.lineTotal,
+          });
+        }
+      }
+    }
+
+    const topProducts = Array.from(productAgg.values())
+      .sort((a, b) => {
+        if (b.quantity !== a.quantity) {
+          return b.quantity - a.quantity;
+        }
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 10);
+
+    return {
+      date: targetDate,
+      summary: {
+        totalOrderCount,
+        totalItemCount,
+        grossRevenue,
+        completedRevenue,
+        cancelledOrderCount,
+        activeOrderCount,
+        averageOrderAmount,
+      },
+      byStatus,
+      topProducts,
+    };
+  }
+
+  async stockView(branchId: string, lowStockThreshold?: number) {
+    const thresholdValue = Number(lowStockThreshold);
+    const threshold = Number.isFinite(thresholdValue) && thresholdValue >= 0 ? thresholdValue : 5;
+
+    const products = await this.prisma.product.findMany({
+      where: { branchId },
+      select: {
+        id: true,
+        name: true,
+        price: true,
+        stock: true,
+        isActive: true,
+        updatedAt: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            menu: {
+              select: {
+                id: true,
+                name: true,
+                isActive: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ stock: 'asc' }, { name: 'asc' }],
+    });
+
+    const items = products.map((product) => {
+      const stockStatus =
+        product.stock <= 0
+          ? 'OUT_OF_STOCK'
+          : product.stock <= threshold
+            ? 'LOW_STOCK'
+            : 'IN_STOCK';
+
+      return {
+        productId: product.id,
+        name: product.name,
+        price: product.price,
+        stock: product.stock,
+        stockStatus,
+        isActive: product.isActive,
+        updatedAt: product.updatedAt,
+        category: {
+          id: product.category.id,
+          name: product.category.name,
+        },
+        menu: {
+          id: product.category.menu.id,
+          name: product.category.menu.name,
+          isActive: product.category.menu.isActive,
+        },
+      };
+    });
+
+    return {
+      threshold,
+      summary: {
+        totalProducts: items.length,
+        inStockCount: items.filter((item) => item.stockStatus === 'IN_STOCK').length,
+        lowStockCount: items.filter((item) => item.stockStatus === 'LOW_STOCK').length,
+        outOfStockCount: items.filter((item) => item.stockStatus === 'OUT_OF_STOCK').length,
+      },
+      items,
+    };
+  }
+
+  private resolveDayRange(inputDate?: string) {
+    const targetDate = inputDate ?? new Date().toISOString().slice(0, 10);
+    const start = new Date(`${targetDate}T00:00:00.000Z`);
+
+    if (Number.isNaN(start.getTime())) {
+      throw new BadRequestException('Invalid date value');
+    }
+
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 1);
+
+    return {
+      targetDate,
+      start,
+      end,
+    };
+  }
+
   async updateOrderStatus(
     branchId: string,
     orderId: string,

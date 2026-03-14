@@ -24,6 +24,8 @@ import { ReviewEligibleDto } from './dto/review-eligible.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdateOrderCustomerDto } from './dto/update-order-customer.dto';
 import { OrderCustomerRefDto } from './dto/order-customer-ref.dto';
+import { DailyOrderSummaryDto } from './dto/daily-order-summary.dto';
+import { StockViewDto } from './dto/stock-view.dto';
 import { OrdersService } from './orders.service';
 
 @Controller()
@@ -106,6 +108,34 @@ export class OrdersController {
   @Get('staff/branches/:branchId/tables/orders')
   tableOrderOverview(@Param('branchId') branchId: string) {
     return this.ordersService.tableOrderOverview(branchId);
+  }
+
+  @UseGuards(JwtAuthGuard, AuthzGuard)
+  @Authz({
+    branchParam: 'branchId',
+    roles: [
+      BRANCH_ROLES.BUSINESS_ADMIN,
+      BRANCH_ROLES.BRANCH_MANAGER,
+      BRANCH_ROLES.STAFF,
+    ],
+  })
+  @Get('staff/branches/:branchId/orders/daily-summary')
+  dailyOrderSummary(@Param('branchId') branchId: string, @Query() query: DailyOrderSummaryDto) {
+    return this.ordersService.dailyOrderSummary(branchId, query.date);
+  }
+
+  @UseGuards(JwtAuthGuard, AuthzGuard)
+  @Authz({
+    branchParam: 'branchId',
+    roles: [
+      BRANCH_ROLES.BUSINESS_ADMIN,
+      BRANCH_ROLES.BRANCH_MANAGER,
+      BRANCH_ROLES.STAFF,
+    ],
+  })
+  @Get('staff/branches/:branchId/stock-view')
+  stockView(@Param('branchId') branchId: string, @Query() query: StockViewDto) {
+    return this.ordersService.stockView(branchId, query.lowStockThreshold);
   }
 
   @UseGuards(JwtAuthGuard, AuthzGuard)

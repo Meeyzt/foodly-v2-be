@@ -392,6 +392,117 @@ describe('Sprint-1 hardening (e2e)', () => {
     expect(adisyon.body.items[0].quantity).toBe(firstOrder.body.items[0].quantity);
   });
 
+  it('staff daily order summary + stock view APIs return dashboard-friendly data', async () => {
+    const managerToken = await loginAndGetToken(managerEmail, password);
+
+    const dashboardDate = '2026-03-14';
+
+    const stockLow = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/products`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        categoryId,
+        name: 'Dashboard Low',
+        price: 95,
+        stock: 3,
+      })
+      .expect(201);
+
+    const stockOut = await request(app.getHttpServer())
+      .post(`/api/staff/branches/${branchId}/products`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        categoryId,
+        name: 'Dashboard Out',
+        price: 45,
+        stock: 1,
+      })
+      .expect(201);
+
+    const completedOrder = await prisma.order.create({
+      data: {
+        branchId,
+        tableId,
+        customerRef: 'daily-summary-completed',
+        status: 'COMPLETED',
+        subtotalAmount: 190,
+        totalAmount: 190,
+        placedAt: new Date(`${dashboardDate}T11:00:00.000Z`),
+        completedAt: new Date(`${dashboardDate}T11:45:00.000Z`),
+      },
+    });
+
+    await prisma.orderItem.createMany({
+      data: [
+        {
+          orderId: completedOrder.id,
+          productId: stockLow.body.id,
+          quantity: 2,
+          unitPrice: 95,
+          lineTotal: 190,
+        },
+      ],
+    });
+
+    const cancelledOrder = await prisma.order.create({
+      data: {
+        branchId,
+        tableId,
+        customerRef: 'daily-summary-cancelled',
+        status: 'CANCELLED',
+        subtotalAmount: 45,
+        totalAmount: 45,
+        placedAt: new Date(`${dashboardDate}T12:00:00.000Z`),
+      },
+    });
+
+    await prisma.orderItem.createMany({
+      data: [
+        {
+          orderId: cancelledOrder.id,
+          productId: stockOut.body.id,
+          quantity: 1,
+          unitPrice: 45,
+          lineTotal: 45,
+        },
+      ],
+    });
+
+    await prisma.product.update({
+      where: { id: stockOut.body.id },
+      data: { stock: 0 },
+    });
+
+    const summary = await request(app.getHttpServer())
+      .get(`/api/staff/branches/${branchId}/orders/daily-summary`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .query({ date: dashboardDate })
+      .expect(200);
+
+    expect(summary.body.date).toBe(dashboardDate);
+    expect(summary.body.summary.totalOrderCount).toBeGreaterThanOrEqual(2);
+    expect(summary.body.summary.cancelledOrderCount).toBeGreaterThanOrEqual(1);
+    expect(summary.body.summary.completedRevenue).toBeGreaterThanOrEqual(190);
+    expect(Array.isArray(summary.body.topProducts)).toBe(true);
+    expect(summary.body.topProducts.length).toBeGreaterThan(0);
+
+    const stockView = await request(app.getHttpServer())
+      .get(`/api/staff/branches/${branchId}/stock-view`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .query({ lowStockThreshold: 3 })
+      .expect(200);
+
+    expect(stockView.body.threshold).toBe(3);
+    expect(stockView.body.summary.lowStockCount).toBeGreaterThanOrEqual(1);
+    expect(stockView.body.summary.outOfStockCount).toBeGreaterThanOrEqual(1);
+    expect(
+      stockView.body.items.some(
+        (item: { productId: string; stockStatus: string }) =>
+          item.productId === stockOut.body.id && item.stockStatus === 'OUT_OF_STOCK',
+      ),
+    ).toBe(true);
+  });
+
   it('manager/business campaign CRUD + segment preview works with branch-scoped authz', async () => {
     const managerToken = await loginAndGetToken(managerEmail, password);
     const staffToken = await loginAndGetToken(staffEmail, password);
